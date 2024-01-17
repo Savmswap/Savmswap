@@ -1,16 +1,13 @@
-### Hi there 👋
+# Sample Hardhat Project
 
-<!--
-**Savmswap/Savmswap** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
+This project demonstrates a basic Hardhat use case. It comes with a sample contract, a test for that contract, and a script that deploys that contract.
 
-Here are some ideas to get you started:
+Try running some of the following tasks:
 
-- 🔭 I’m currently working on ...
-- 🌱 I’m currently learning ...
-- 👯 I’m looking to collaborate on ...
-- 🤔 I’m looking for help with ...
-- 💬 Ask me about ...
-- 📫 How to reach me: ...
-- 😄 Pronouns: ...
-- ⚡ Fun fact: ...
--->
+```shell
+npx hardhat help
+npx hardhat test
+REPORT_GAS=true npx hardhat test
+npx hardhat node
+npx hardhat run scripts/deploy.js
+```
