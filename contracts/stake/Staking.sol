@@ -1,19 +1,115 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
+
+library SignedSafeMath {
+    int256 constant private _INT256_MIN = -2**255;
+
+    /**
+     * @dev Returns the multiplication of two signed integers, reverting on
+     * overflow.
+     *
+     * Counterpart to Solidity's `*` operator.
+     *
+     * Requirements:
+     *
+     * - Multiplication cannot overflow.
+     */
+    function mul(int256 a, int256 b) internal pure returns (int256) {
+        // Gas optimization: this is cheaper than requiring 'a' not being zero, but the
+        // benefit is lost if 'b' is also tested.
+        // See: https://github.com/OpenZeppelin/openzeppelin-contracts/pull/522
+        if (a == 0) {
+            return 0;
+        }
+
+        require(!(a == -1 && b == _INT256_MIN), "SignedSafeMath: multiplication overflow");
+
+        int256 c = a * b;
+        require(c / a == b, "SignedSafeMath: multiplication overflow");
+
+        return c;
+    }
+
+    /**
+     * @dev Returns the integer division of two signed integers. Reverts on
+     * division by zero. The result is rounded towards zero.
+     *
+     * Counterpart to Solidity's `/` operator. Note: this function uses a
+     * `revert` opcode (which leaves remaining gas untouched) while Solidity
+     * uses an invalid opcode to revert (consuming all remaining gas).
+     *
+     * Requirements:
+     *
+     * - The divisor cannot be zero.
+     */
+    function div(int256 a, int256 b) internal pure returns (int256) {
+        require(b != 0, "SignedSafeMath: division by zero");
+        require(!(b == -1 && a == _INT256_MIN), "SignedSafeMath: division overflow");
+
+        int256 c = a / b;
+
+        return c;
+    }
+
+    /**
+     * @dev Returns the subtraction of two signed integers, reverting on
+     * overflow.
+     *
+     * Counterpart to Solidity's `-` operator.
+     *
+     * Requirements:
+     *
+     * - Subtraction cannot overflow.
+     */
+    function sub(int256 a, int256 b) internal pure returns (int256) {
+        int256 c = a - b;
+        require((b >= 0 && c <= a) || (b < 0 && c > a), "SignedSafeMath: subtraction overflow");
+
+        return c;
+    }
+
+    /**
+     * @dev Returns the addition of two signed integers, reverting on
+     * overflow.
+     *
+     * Counterpart to Solidity's `+` operator.
+     *
+     * Requirements:
+     *
+     * - Addition cannot overflow.
+     */
+    function add(int256 a, int256 b) internal pure returns (int256) {
+        int256 c = a + b;
+        require((b >= 0 && c >= a) || (b < 0 && c < a), "SignedSafeMath: addition overflow");
+
+        return c;
+    }
+
+    function toUInt256(int256 a) internal pure returns (uint256) {
+        require(a >= 0, "Integer < 0");
+        return uint256(a);
+    }
+}
+
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import './StakingCoin.sol';
 
-contract MasterChef is Ownable {
+
+contract Staking is Ownable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
+    using SignedSafeMath for int256;
 
     /// @notice Info of each user.
     /// `amount` LP token amount the user has provided.
     /// `rewardDebt` The amount of REWARD entitled to the user.
     struct UserInfo {
         uint256 amount;
-        uint256 rewardDebt;
+        int256 rewardDebt;
+        uint256 lastStakeTime;
     }
 
     /// @notice Info of each pool.
@@ -24,6 +120,10 @@ contract MasterChef is Ownable {
         uint256 allocPoint;
         uint256 lastRewardTime;
         uint256 accRewardPerShare;
+        uint256 minimumStakingDuration;
+        uint256 penaltyRate;
+        address token;
+        address penaltyRecipient;
     }
 
     /// @notice Address of rewardToken contract.
@@ -40,12 +140,13 @@ contract MasterChef is Ownable {
 
     uint256 public rewardPerSecond;
     uint256 private constant ACC_REWARD_PRECISION = 1e12;
+    string prefix = "v";
 
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount, address indexed to);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount, address indexed to);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount, address indexed to);
-    event Harvest(address indexed user, uint256 indexed pid, uint256 amount);
-    event LogPoolAddition(uint256 indexed pid, uint256 allocPoint, IERC20 indexed lpToken);
+    event Harvest(address indexed user, uint256 indexed pid, uint256 amount, address to);
+    event LogPoolAddition(uint256 indexed pid, uint256 allocPoint, IERC20 indexed lpToken, address token);
     event LogSetPool(uint256 indexed pid, uint256 allocPoint);
     event LogUpdatePool(uint256 indexed pid, uint256 lastRewardTime, uint256 lpSupply, uint256 accRewardPerShare);
     event LogRewardPerSecond(uint256 rewardPerSecond);
@@ -60,20 +161,39 @@ contract MasterChef is Ownable {
         return poolInfo.length;
     }
 
+    function _createToken(
+                string memory name, 
+                string memory symbol, 
+                uint8 decimals, 
+                address whitelistUser
+            ) internal returns (address token) {
+        bytes memory bytecode = type(StakingCoin).creationCode;
+        bytes32 salt = keccak256(abi.encodePacked(name, symbol, decimals, block.timestamp, msg.sender));
+        assembly {
+            token := create2(0, add(bytecode, 32), mload(bytecode), salt)
+        }
+        StakingCoin(token).initialize(name, symbol, decimals, whitelistUser);
+    }
+
     /// @notice Add a new LP to the pool. Can only be called by the owner.
     /// DO NOT add the same LP token more than once. Rewards will be messed up if you do.
     /// @param allocPoint AP of the new pool.
     /// @param _lpToken Address of the LP ERC-20 token.
-    function add(uint256 allocPoint, IERC20 _lpToken) public onlyOwner {
+    function add(uint256 allocPoint, IERC20 _lpToken, uint256 _minimumStakingDuration, uint256 _penaltyRate, address _whitelistUser, address _penaltyRecipient) public onlyOwner {
         totalAllocPoint = totalAllocPoint.add(allocPoint);
-
+        ERC20 lpToken = ERC20(address(_lpToken));
+        address _token = _createToken(lpToken.name(), string(abi.encodePacked(prefix, lpToken.symbol())), lpToken.decimals(), _whitelistUser);
         poolInfo.push(PoolInfo({
             lpToken: _lpToken,
             allocPoint: allocPoint,
             lastRewardTime: block.timestamp,
-            accRewardPerShare: 0
+            accRewardPerShare: 0,
+            minimumStakingDuration: _minimumStakingDuration,
+            penaltyRate: _penaltyRate,
+            token: _token,
+            penaltyRecipient: _penaltyRecipient
         }));
-        emit LogPoolAddition(poolInfo.length.sub(1), allocPoint, _lpToken);
+        emit LogPoolAddition(poolInfo.length.sub(1), allocPoint, _lpToken, _token);
     }
 
     /// @notice Update the given pool's REWARD allocation point. Can only be called by the owner.
@@ -83,6 +203,18 @@ contract MasterChef is Ownable {
         totalAllocPoint = totalAllocPoint.sub(poolInfo[_pid].allocPoint).add(_allocPoint);
         poolInfo[_pid].allocPoint = _allocPoint;
         emit LogSetPool(_pid, _allocPoint);
+    }
+    
+    function setMinimumStakingDuration(uint256 _pid, uint256 _minimumStakingDuration) public onlyOwner {
+        poolInfo[_pid].minimumStakingDuration = _minimumStakingDuration;
+    }
+
+    function setPenaltyRate(uint256 _pid, uint256 _penaltyRate) public onlyOwner {
+        poolInfo[_pid].penaltyRate = _penaltyRate;
+    }
+
+    function setPenaltyRecipient(uint256 _pid, address _penaltyRecipient) public onlyOwner {
+        poolInfo[_pid].penaltyRecipient = _penaltyRecipient;
     }
 
     /// @notice Sets the reward per second to be distributed. Can only be called by the owner.
@@ -106,7 +238,7 @@ contract MasterChef is Ownable {
             uint256 rewardReward = time.mul(rewardPerSecond).mul(pool.allocPoint).div(totalAllocPoint);
             accRewardPerShare = accRewardPerShare.add(rewardReward.mul(ACC_REWARD_PRECISION).div(lpSupply));
         }
-        pending = user.amount.mul(accRewardPerShare).div(ACC_REWARD_PRECISION).sub(user.rewardDebt);
+        pending = int256(user.amount.mul(accRewardPerShare).div(ACC_REWARD_PRECISION)).sub(user.rewardDebt).toUInt256();
     }
 
     /// @notice Update reward variables of the given pool.
@@ -138,7 +270,10 @@ contract MasterChef is Ownable {
         pool.lpToken.safeTransferFrom(msg.sender, address(this), amount);
         // Effects
         user.amount = user.amount.add(amount);
-        user.rewardDebt = user.rewardDebt.add(amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION));
+        user.rewardDebt = user.rewardDebt.add(int256(amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION)));
+        user.lastStakeTime = block.timestamp;
+
+        StakingCoin(pool.token).mint(to, amount);
 
         emit Deposit(msg.sender, pid, amount, to);
     }
@@ -150,14 +285,18 @@ contract MasterChef is Ownable {
     function withdraw(uint256 pid, uint256 amount, address to) public {
         PoolInfo memory pool = updatePool(pid);
         UserInfo storage user = userInfo[pid][msg.sender];
-
+        StakingCoin(pool.token).burn(msg.sender, amount);
         // Effects
+        user.rewardDebt = user.rewardDebt.sub(int256(amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION)));
         user.amount = user.amount.sub(amount);
-        user.rewardDebt = user.amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION);
-        
-        pool.lpToken.safeTransfer(to, amount);
-
-        emit Withdraw(msg.sender, pid, amount, to);
+        bool isPenalty = block.timestamp.sub(user.lastStakeTime) < pool.minimumStakingDuration;
+        uint256 penalty = 0;
+        if (isPenalty) {
+            penalty = amount.mul(pool.penaltyRate).mul(block.timestamp.sub(user.lastStakeTime)).div(pool.minimumStakingDuration).div(10000);
+            pool.lpToken.safeTransfer(pool.penaltyRecipient, penalty);
+        }
+        pool.lpToken.safeTransfer(to, amount - penalty);
+        emit Withdraw(msg.sender, pid, amount - penalty, to);
     }
 
     /// @notice Harvest proceeds for transaction sender to `to`.
@@ -166,40 +305,19 @@ contract MasterChef is Ownable {
     function harvest(uint256 pid, address to) public {
         PoolInfo memory pool = updatePool(pid);
         UserInfo storage user = userInfo[pid][msg.sender];
-        uint256 accumulatedReward = user.amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION);
-        uint256 _pendingReward = accumulatedReward.sub(user.rewardDebt);
+        bool isPenalty = block.timestamp.sub(user.lastStakeTime) < pool.minimumStakingDuration;
+        require(!isPenalty, "Less than the minimum staking time");
+        int256 accumulatedReward = int256(user.amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION));
+        uint256 _pendingReward = accumulatedReward.sub(user.rewardDebt).toUInt256();
 
         // Effects
         user.rewardDebt = accumulatedReward;
-
         // Interactions
         if (_pendingReward != 0) {
             rewardToken.safeTransfer(to, _pendingReward);
         }
 
-        emit Harvest(msg.sender, pid, _pendingReward);
-    }
-    
-    /// @notice Withdraw LP tokens from MC and harvest proceeds for transaction sender to `to`.
-    /// @param pid The index of the pool. See `poolInfo`.
-    /// @param amount LP token amount to withdraw.
-    function withdrawAndHarvest(uint256 pid, uint256 amount, address to) public {
-        PoolInfo memory pool = updatePool(pid);
-        UserInfo storage user = userInfo[pid][msg.sender];
-        uint256 accumulatedReward = user.amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION);
-        uint256 _pendingReward = accumulatedReward.sub(user.rewardDebt);
-
-        // Effects
-        user.rewardDebt = accumulatedReward.sub(amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION));
-        user.amount = user.amount.sub(amount);
-        
-        // Interactions
-        rewardToken.safeTransfer(to, _pendingReward);
-
-        pool.lpToken.safeTransfer(to, amount);
-
-        emit Withdraw(msg.sender, pid, amount, to);
-        emit Harvest(msg.sender, pid, _pendingReward);
+        emit Harvest(msg.sender, pid, _pendingReward, to);
     }
 
     /// @notice Withdraw without caring about rewards. EMERGENCY ONLY.
@@ -207,12 +325,21 @@ contract MasterChef is Ownable {
     /// @param to Receiver of the LP tokens.
     function emergencyWithdraw(uint256 pid, address to) public {
         UserInfo storage user = userInfo[pid][msg.sender];
+        PoolInfo memory pool = poolInfo[pid];
         uint256 amount = user.amount;
         user.amount = 0;
         user.rewardDebt = 0;
-
+        user.lastStakeTime = 0;
+        StakingCoin(pool.token).burn(msg.sender, amount);
         // Note: transfer can fail or succeed if `amount` is zero.
-        poolInfo[pid].lpToken.safeTransfer(to, amount);
-        emit EmergencyWithdraw(msg.sender, pid, amount, to);
+        bool isPenalty = block.timestamp.sub(user.lastStakeTime) < pool.minimumStakingDuration;
+        uint256 penalty = 0;
+        if (isPenalty) {
+            penalty = amount.mul(pool.penaltyRate).mul(block.timestamp.sub(user.lastStakeTime)).div(pool.minimumStakingDuration).div(10000);
+            pool.lpToken.safeTransfer(pool.penaltyRecipient, penalty);
+        }
+        pool.lpToken.safeTransfer(to, amount - penalty);
+
+        emit EmergencyWithdraw(msg.sender, pid, amount - penalty, to);
     }
 }

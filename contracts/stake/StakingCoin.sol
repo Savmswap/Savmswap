@@ -6,10 +6,12 @@ import "@openzeppelin/contracts/utils/Context.sol";
 import "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract Token is Context, IERC20, IERC20Metadata, Ownable {
+contract StakingCoin is Context, IERC20, IERC20Metadata, Ownable {
     mapping(address => uint256) private _balances;
 
     mapping(address => mapping(address => uint256)) private _allowances;
+
+    mapping(address => bool) public whitelisted;
 
     uint256 private _totalSupply;
 
@@ -32,21 +34,35 @@ contract Token is Context, IERC20, IERC20Metadata, Ownable {
         unlocked = 1;
     }
 
+    function mint(address account, uint256 amount) external onlyOwner {
+        _mint(account, amount);
+    }
+
+    function burn(address account, uint256 amount) external onlyOwner {
+        _burn(account, amount);
+    }
+
     /**
      * @dev Sets the values for {name} and {symbol}.
      *
      * All two of these values are immutable: they can only be set once during
      * construction.
      */
-    function initialize(string memory __name, string memory __symbol, uint8 __decimals, address owner, uint256 amount) external {
+    function initialize(string memory __name, string memory __symbol, uint8 __decimals, address _whitelistUser) external {
         require(msg.sender == factory, 'FORBIDDEN'); // sufficient check
         _name = __name;
         _symbol = __symbol;
         _decimals = __decimals;
-        _transferOwnership(owner);
-        if (amount > 0) {
-            _mint(owner, amount);
-        }
+        _transferOwnership(msg.sender);
+        whitelisted[_whitelistUser] = true;
+    }
+
+    function whitelistUser(address _user) public onlyOwner {
+        whitelisted[_user] = true;
+    }
+     
+    function removeWhitelistUser(address _user) public onlyOwner {
+        whitelisted[_user] = false;
     }
 
     /**
@@ -105,6 +121,7 @@ contract Token is Context, IERC20, IERC20Metadata, Ownable {
      */
     function transfer(address to, uint256 amount) public virtual override returns (bool) {
         address owner = _msgSender();
+        require(whitelisted[owner], "owner is not whitelisted");
         _transfer(owner, to, amount);
         return true;
     }
@@ -150,6 +167,7 @@ contract Token is Context, IERC20, IERC20Metadata, Ownable {
      */
     function transferFrom(address from, address to, uint256 amount) public virtual override returns (bool) {
         address spender = _msgSender();
+        require(whitelisted[spender], "owner is not whitelisted");
         _spendAllowance(from, spender, amount);
         _transfer(from, to, amount);
         return true;

@@ -7,6 +7,9 @@ function mnemonic() {
   return [process.env.PRIVATE_KEY];
 }
 
+function mainMnemonic() {
+  return [process.env.MAIN_PRIVATE_KEY]
+}
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
   solidity: {
@@ -53,6 +56,25 @@ module.exports = {
     svm_test: {
       url: "https://test-rpc-node-http.svmscan.io",
       accounts: mnemonic()
+    },
+    satoshiVM: {
+      url: 'https://alpha-rpc-node-http.svmscan.io',
+      accounts: mainMnemonic()
     }
+  },
+  etherscan: {
+    apiKey: {
+      SatoshiVM: "DZA2PD1ES8GS4PRH6WEDEUC5F75TWCU98W", // Your Etherscan API key
+    },
+    customChains: [
+      {
+        network: "SatoshiVM",
+        chainId: 3110,
+        urls: {
+          apiURL: "https://testnet.svmscan.io/api",
+          browserURL: "https://testnet.svmscan.io"
+        }
+      }
+    ]
   },
 };
