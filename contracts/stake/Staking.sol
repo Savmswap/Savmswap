@@ -95,10 +95,11 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
 import './StakingCoin.sol';
 
 
-contract Staking is Ownable {
+contract Staking is Ownable, Pausable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
     using SignedSafeMath for int256;
@@ -182,7 +183,7 @@ contract Staking is Ownable {
     function add(uint256 allocPoint, IERC20 _lpToken, uint256 _minimumStakingDuration, uint256 _penaltyRate, address _whitelistUser, address _penaltyRecipient) public onlyOwner {
         totalAllocPoint = totalAllocPoint.add(allocPoint);
         ERC20 lpToken = ERC20(address(_lpToken));
-        address _token = _createToken(string(abi.encodePacked("Earnest", lpToken.name()), string(abi.encodePacked(prefix, lpToken.symbol())), lpToken.decimals(), _whitelistUser);
+        address _token = _createToken(string(abi.encodePacked("Earnest", lpToken.name())), string(abi.encodePacked(prefix, lpToken.symbol())), lpToken.decimals(), _whitelistUser);
         poolInfo.push(PoolInfo({
             lpToken: _lpToken,
             allocPoint: allocPoint,
@@ -263,7 +264,7 @@ contract Staking is Ownable {
     /// @param pid The index of the pool. See `poolInfo`.
     /// @param amount LP token amount to deposit.
     /// @param to The receiver of `amount` deposit benefit.
-    function deposit(uint256 pid, uint256 amount, address to) public {
+    function deposit(uint256 pid, uint256 amount, address to) public whenNotPaused {
         PoolInfo memory pool = updatePool(pid);
         UserInfo storage user = userInfo[pid][to];
 
@@ -296,19 +297,19 @@ contract Staking is Ownable {
             user.lastStakeTime = block.timestamp;
             user.rewardDebt = 0;
         } else if (user.amount == 0){
-            uint256 accumulatedReward = user.amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION);
-            _pendingReward = accumulatedReward.sub(user.rewardDebt);
-            user.rewardDebt = accumulatedReward.sub(amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION));
+            int256 accumulatedReward = int256(user.amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION));
+            _pendingReward = accumulatedReward.sub(user.rewardDebt).toUInt256();
+            user.rewardDebt = accumulatedReward;
         } else {
             user.rewardDebt = user.rewardDebt.sub(int256(amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION)));
         }
         user.amount = user.amount.sub(amount);
-        
+
         if (_pendingReward != 0) {
             rewardToken.safeTransfer(to, _pendingReward);
         }
         pool.lpToken.safeTransfer(to, amount - penalty);
-        emit Withdraw(msg.sender, pid, amount - penalty, to);
+        emit Withdraw(msg.sender, pid, amount, to);
     }
 
     /// @notice Harvest proceeds for transaction sender to `to`.
@@ -330,5 +331,17 @@ contract Staking is Ownable {
         }
 
         emit Harvest(msg.sender, pid, _pendingReward, to);
+    }
+
+    function withdrawRewardToken(address to, uint256 amount) external onlyOwner {
+        rewardToken.safeTransfer(to, amount);
+    }
+
+    function pause() external onlyOwner whenNotPaused {
+        _pause();
+    }
+
+    function unpause() external onlyOwner whenPaused {
+        _unpause();
     }
 }

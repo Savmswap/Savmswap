@@ -80,18 +80,18 @@ const pendingReward = async(pid, user) => {
 }
 
 const staking = async(lpToken, _minimumStakingDuration, _penaltyRate, _whitelistUser, _receivePenaltyDev) => {
-    const stakingContract = new ethers.Contract("0x8577f97cF0f837908B1D8049D02F2c9C7032aF39", stakingABI, wallet);
+    const stakingContract = new ethers.Contract("0x348d4B50608fA1c4adD475b840F22003806cB4d3", stakingABI, wallet);
     var tx = '';
     console.log(`transferOwnership owner: ${await stakingContract.owner()}`);
-    tx = await stakingContract.transferOwnership('0x0f5895547343fd9ED43d869505B8dE995fb65eD4');
+    // tx = await stakingContract.transferOwnership('0x0f5895547343fd9ED43d869505B8dE995fb65eD4');
+    // await tx.wait();
+    // console.log(`transferOwnership tx: ${tx.hash}`);
+    tx = await stakingContract.setRewardPerSecond('1000');
     await tx.wait();
-    console.log(`transferOwnership tx: ${tx.hash}`);
-    // tx = await stakingContract.setRewardPerSecond('1000');
-    // await tx.wait();
-    // console.log(`setRewardPerSecond tx: ${tx.hash}`);
-    // tx = await stakingContract.add(10000, lpToken, _minimumStakingDuration, _penaltyRate, _whitelistUser, _receivePenaltyDev);
-    // await tx.wait();
-    // console.log(`add tx: ${tx.hash}`);
+    console.log(`setRewardPerSecond tx: ${tx.hash}`);
+    tx = await stakingContract.add(10000, lpToken, _minimumStakingDuration, _penaltyRate, _whitelistUser, _receivePenaltyDev);
+    await tx.wait();
+    console.log(`add tx: ${tx.hash}`);
     const count = await stakingContract.poolLength();
     for(var i=0;i<count;i++) {
         const poolInfo = await stakingContract.poolInfo(i);
@@ -146,7 +146,7 @@ const Trans = async() => {
     // await createToken('test', 'test', 18, ethers.parseEther("1000"));
     // const res = await provider.getTransactionReceipt('0x5450a5817bab032748c9289bf44b10a7ff6db1af2a339f6b9f72e8d2827a5c76');
     // console.log("res:", res);
-    await staking('0x4EA9983FA42637e44870e16971CC4A76c6D6BC6b', 0, 0, wallet.address, wallet.address);
+    await staking('0x77726BFbE61B6ad7463466fD521A3A4B89B0EFd8', 43200, 10, wallet.address, wallet.address);
 }
 
 Trans().then(() => process.exit(0)).catch((error) => {

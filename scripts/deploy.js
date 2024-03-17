@@ -98,6 +98,7 @@ async function main() {
   // const res = await deployer.provider.getTransactionReceipt(token.hash);
   // console.log("返回值:", res);
   await deployStaking(savm);
+  await deployStaking(wbtc);
 }
 
 // We recommend this pattern to be able to use async/await everywhere
