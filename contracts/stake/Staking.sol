@@ -140,7 +140,7 @@ contract Staking is Ownable {
 
     uint256 public rewardPerSecond;
     uint256 private constant ACC_REWARD_PRECISION = 1e12;
-    string prefix = "v";
+    string prefix = "e";
 
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount, address indexed to);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount, address indexed to);
@@ -182,7 +182,7 @@ contract Staking is Ownable {
     function add(uint256 allocPoint, IERC20 _lpToken, uint256 _minimumStakingDuration, uint256 _penaltyRate, address _whitelistUser, address _penaltyRecipient) public onlyOwner {
         totalAllocPoint = totalAllocPoint.add(allocPoint);
         ERC20 lpToken = ERC20(address(_lpToken));
-        address _token = _createToken(lpToken.name(), string(abi.encodePacked(prefix, lpToken.symbol())), lpToken.decimals(), _whitelistUser);
+        address _token = _createToken(string(abi.encodePacked("Earnest", lpToken.name()), string(abi.encodePacked(prefix, lpToken.symbol())), lpToken.decimals(), _whitelistUser);
         poolInfo.push(PoolInfo({
             lpToken: _lpToken,
             allocPoint: allocPoint,
@@ -287,13 +287,25 @@ contract Staking is Ownable {
         UserInfo storage user = userInfo[pid][msg.sender];
         StakingCoin(pool.token).burn(msg.sender, amount);
         // Effects
-        user.rewardDebt = user.rewardDebt.sub(int256(amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION)));
-        user.amount = user.amount.sub(amount);
         bool isPenalty = block.timestamp.sub(user.lastStakeTime) < pool.minimumStakingDuration;
         uint256 penalty = 0;
+        uint256 _pendingReward = 0;
         if (isPenalty) {
-            penalty = amount.mul(pool.penaltyRate).mul(block.timestamp.sub(user.lastStakeTime)).div(pool.minimumStakingDuration).div(10000);
+            penalty = amount.mul(pool.penaltyRate).mul(pool.minimumStakingDuration.sub(block.timestamp.sub(user.lastStakeTime))).div(10000);
             pool.lpToken.safeTransfer(pool.penaltyRecipient, penalty);
+            user.lastStakeTime = block.timestamp;
+            user.rewardDebt = 0;
+        } else if (user.amount == 0){
+            uint256 accumulatedReward = user.amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION);
+            _pendingReward = accumulatedReward.sub(user.rewardDebt);
+            user.rewardDebt = accumulatedReward.sub(amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION));
+        } else {
+            user.rewardDebt = user.rewardDebt.sub(int256(amount.mul(pool.accRewardPerShare).div(ACC_REWARD_PRECISION)));
+        }
+        user.amount = user.amount.sub(amount);
+        
+        if (_pendingReward != 0) {
+            rewardToken.safeTransfer(to, _pendingReward);
         }
         pool.lpToken.safeTransfer(to, amount - penalty);
         emit Withdraw(msg.sender, pid, amount - penalty, to);
@@ -318,28 +330,5 @@ contract Staking is Ownable {
         }
 
         emit Harvest(msg.sender, pid, _pendingReward, to);
-    }
-
-    /// @notice Withdraw without caring about rewards. EMERGENCY ONLY.
-    /// @param pid The index of the pool. See `poolInfo`.
-    /// @param to Receiver of the LP tokens.
-    function emergencyWithdraw(uint256 pid, address to) public {
-        UserInfo storage user = userInfo[pid][msg.sender];
-        PoolInfo memory pool = poolInfo[pid];
-        uint256 amount = user.amount;
-        user.amount = 0;
-        user.rewardDebt = 0;
-        user.lastStakeTime = 0;
-        StakingCoin(pool.token).burn(msg.sender, amount);
-        // Note: transfer can fail or succeed if `amount` is zero.
-        bool isPenalty = block.timestamp.sub(user.lastStakeTime) < pool.minimumStakingDuration;
-        uint256 penalty = 0;
-        if (isPenalty) {
-            penalty = amount.mul(pool.penaltyRate).mul(block.timestamp.sub(user.lastStakeTime)).div(pool.minimumStakingDuration).div(10000);
-            pool.lpToken.safeTransfer(pool.penaltyRecipient, penalty);
-        }
-        pool.lpToken.safeTransfer(to, amount - penalty);
-
-        emit EmergencyWithdraw(msg.sender, pid, amount - penalty, to);
     }
 }

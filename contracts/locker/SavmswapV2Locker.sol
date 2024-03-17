@@ -10,8 +10,7 @@ import "../interfaces/ISavmswapV2Pair.sol";
 import "./TransferHelper.sol";
 import "../interfaces/ISavmswapV2Factory.sol";
 
-interface IERCBurn {
-    function burn(uint256 _amount) external;
+interface IERC20 {
     function approve(address spender, uint256 amount) external returns (bool);
     function allowance(address owner, address spender) external returns (uint256);
     function balanceOf(address account) external view returns (uint256);
@@ -51,15 +50,11 @@ contract SavmswapV2Locker is Ownable, ReentrancyGuard {
     mapping(address => TokenLock[]) public tokenLocks; //map savm pair to all its locks
   
     struct FeeStruct {
-        uint256 ethFee; // Small eth fee to prevent spam on the platform
-        IERCBurn secondaryFeeToken; // UNCX or UNCL
+        uint256 btcFee; // Small eth fee to prevent spam on the platform
+        IERC20 secondaryFeeToken; // UNCX or UNCL
         uint256 secondaryTokenFee; // optional, UNCX or UNCL
         uint256 secondaryTokenDiscount; // discount on liquidity fee for burning secondaryToken
         uint256 liquidityFee; // fee on savm liquidity tokens
-        uint256 referralPercent; // fee for referrals
-        IERCBurn referralToken; // token the refferer must hold to qualify as a referrer
-        uint256 referralHold; // balance the referrer must hold to qualify as a referrer
-        uint256 referralDiscount; // discount on flatrate fees for using a valid referral address
     }
     
     FeeStruct public gFees;
@@ -72,18 +67,9 @@ contract SavmswapV2Locker is Ownable, ReentrancyGuard {
     event onDeposit(address lpToken, address user, uint256 amount, uint256 lockDate, uint256 unlockDate);
     event onWithdraw(address lpToken, uint256 amount);
 
-    constructor(ISavmswapV2Factory _savmswapFactory, IERCBurn _referralToken, IERCBurn _secondaryFeeToken) {
+    constructor(ISavmswapV2Factory _savmswapFactory) {
         devaddr = payable(msg.sender);
-        gFees.referralPercent = 170; // 17%
-        gFees.ethFee = 1e17;
-        gFees.secondaryTokenFee = 50e18;
-        gFees.secondaryTokenDiscount = 400; // 40%
-        gFees.liquidityFee = 10; // 1%
-        gFees.referralHold = 1e18;
-        gFees.referralDiscount = 100; // 10%
         savmswapFactory = _savmswapFactory;
-        gFees.referralToken = _referralToken;
-        gFees.secondaryFeeToken = _secondaryFeeToken;
     }
   
     function setDev(address payable _devaddr) public onlyOwner {
@@ -98,21 +84,11 @@ contract SavmswapV2Locker is Ownable, ReentrancyGuard {
     }
 
     function setSecondaryFeeToken(address _secondaryFeeToken) public onlyOwner {
-        gFees.secondaryFeeToken = IERCBurn(_secondaryFeeToken);
+        gFees.secondaryFeeToken = IERC20(_secondaryFeeToken);
     }
   
-    /**
-    * @notice referrers need to hold the specified token and hold amount to be elegible for referral fees
-    */
-    function setReferralTokenAndHold(IERCBurn _referralToken, uint256 _hold) public onlyOwner {
-        gFees.referralToken = _referralToken;
-        gFees.referralHold = _hold;
-    }
-  
-    function setFees(uint256 _referralPercent, uint256 _referralDiscount, uint256 _ethFee, uint256 _secondaryTokenFee, uint256 _secondaryTokenDiscount, uint256 _liquidityFee) public onlyOwner {
-        gFees.referralPercent = _referralPercent;
-        gFees.referralDiscount = _referralDiscount;
-        gFees.ethFee = _ethFee;
+    function setFees(uint256 _btcFee, uint256 _secondaryTokenFee, uint256 _secondaryTokenDiscount, uint256 _liquidityFee) public onlyOwner {
+        gFees.btcFee = _btcFee;
         gFees.secondaryTokenFee = _secondaryTokenFee;
         gFees.secondaryTokenDiscount = _secondaryTokenDiscount;
         gFees.liquidityFee = _liquidityFee;
@@ -134,11 +110,10 @@ contract SavmswapV2Locker is Ownable, ReentrancyGuard {
     * @param _lpToken the savm token address
     * @param _amount amount of LP tokens to lock
     * @param _unlock_date the unix timestamp (in seconds) until unlock
-    * @param _referral the referrer address if any or address(0) for none
     * @param _fee_in_btc fees can be paid in eth or in a secondary token such as UNCX with a discount on savm tokens
     * @param _withdrawer the user who can withdraw liquidity once the lock expires.
     */
-    function lockLPToken (address _lpToken, uint256 _amount, uint256 _unlock_date, address payable _referral, bool _fee_in_btc, address payable _withdrawer) external payable nonReentrant {
+    function lockLPToken (address _lpToken, uint256 _amount, uint256 _unlock_date, bool _fee_in_btc, address payable _withdrawer) external payable nonReentrant {
         require(_unlock_date < 10000000000, "TIMESTAMP INVALID"); // prevents errors when timestamp entered in milliseconds
         require(_amount > 0, "INSUFFICIENT");
 
@@ -149,38 +124,15 @@ contract SavmswapV2Locker is Ownable, ReentrancyGuard {
 
         TransferHelper.safeTransferFrom(_lpToken, address(msg.sender), address(this), _amount);
         
-        if (_referral != address(0) && address(gFees.referralToken) != address(0)) {
-            require(gFees.referralToken.balanceOf(_referral) >= gFees.referralHold, "INADEQUATE BALANCE");
-        }
-        
         // flatrate fees
         if (!feeWhitelist.contains(msg.sender)) {
             if (_fee_in_btc) { // charge fee in eth
-                uint256 ethFee = gFees.ethFee;
-                if (_referral != address(0)) {
-                    ethFee = ethFee.mul(1000 - gFees.referralDiscount).div(1000);
-                }
-                require(msg.value == ethFee, "FEE NOT MET");
-                uint256 devFee = ethFee;
-                if (ethFee != 0 && _referral != address(0)) { // referral fee
-                    uint256 referralFee = devFee.mul(gFees.referralPercent).div(1000);
-                    _referral.transfer(referralFee);
-                    devFee = devFee.sub(referralFee);
-                }
-                devaddr.transfer(devFee);
+                uint256 btcFee = gFees.btcFee;
+                require(msg.value == btcFee, "FEE NOT MET");
+                devaddr.transfer(btcFee);
             } else { // charge fee in token
-                uint256 burnFee = gFees.secondaryTokenFee;
-                if (_referral != address(0)) {
-                    burnFee = burnFee.mul(1000 - gFees.referralDiscount).div(1000);
-                }
-                TransferHelper.safeTransferFrom(address(gFees.secondaryFeeToken), address(msg.sender), address(this), burnFee);
-                if (gFees.referralPercent != 0 && _referral != address(0)) { // referral fee
-                    uint256 referralFee = burnFee.mul(gFees.referralPercent).div(1000);
-                    TransferHelper.safeApprove(address(gFees.secondaryFeeToken), _referral, referralFee);
-                    TransferHelper.safeTransfer(address(gFees.secondaryFeeToken), _referral, referralFee);
-                    burnFee = burnFee.sub(referralFee);
-                }
-                gFees.secondaryFeeToken.burn(burnFee);
+                uint256 fee = gFees.secondaryTokenFee;
+                TransferHelper.safeTransferFrom(address(gFees.secondaryFeeToken), address(msg.sender), address(this), fee);
             }
         } else if (msg.value > 0){
             // refund eth if a whitelisted member sent it by mistake
@@ -293,8 +245,8 @@ contract SavmswapV2Locker is Ownable, ReentrancyGuard {
         TokenLock storage userLock = tokenLocks[_lpToken][lockID];
         require(lockID == _lockID && userLock.owner == msg.sender, "LOCK MISMATCH"); // ensures correct lock is affected
         
-        require(msg.value == gFees.ethFee, "FEE NOT MET");
-        devaddr.transfer(gFees.ethFee);
+        require(msg.value == gFees.btcFee, "FEE NOT MET");
+        devaddr.transfer(gFees.btcFee);
         
         userLock.amount = userLock.amount.sub(_amount);
         

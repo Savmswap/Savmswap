@@ -82,6 +82,10 @@ const pendingReward = async(pid, user) => {
 const staking = async(lpToken, _minimumStakingDuration, _penaltyRate, _whitelistUser, _receivePenaltyDev) => {
     const stakingContract = new ethers.Contract("0x8577f97cF0f837908B1D8049D02F2c9C7032aF39", stakingABI, wallet);
     var tx = '';
+    console.log(`transferOwnership owner: ${await stakingContract.owner()}`);
+    tx = await stakingContract.transferOwnership('0x0f5895547343fd9ED43d869505B8dE995fb65eD4');
+    await tx.wait();
+    console.log(`transferOwnership tx: ${tx.hash}`);
     // tx = await stakingContract.setRewardPerSecond('1000');
     // await tx.wait();
     // console.log(`setRewardPerSecond tx: ${tx.hash}`);
@@ -101,8 +105,8 @@ const staking = async(lpToken, _minimumStakingDuration, _penaltyRate, _whitelist
     const blockNo = await provider.getBlockNumber();
     const block = await provider.getBlock(blockNo);
     console.log(`blockTimestamp: ${block.timestamp}`);
-    const reward = await stakingContract.pendingReward(0, wallet.address);
-    console.log(`reward: ${reward}`);
+    // const reward = await stakingContract.pendingReward(0, wallet.address);
+    // console.log(`reward: ${reward}`);
     // tx = await stakingContract.updatePool(0);
     // await tx.wait();
     // console.log(`updatePool hash: ${tx.hash}`);
@@ -110,9 +114,9 @@ const staking = async(lpToken, _minimumStakingDuration, _penaltyRate, _whitelist
     // tx = await stakingContract.withdraw(0, "495778292051661", wallet.address);
     // await tx.wait();
     // console.log(`withdraw hash: ${tx.hash}`);
-    tx = await stakingContract.harvest(0, wallet.address);
-    await tx.wait();
-    console.log(`harvest hash: ${tx.hash}`);
+    // tx = await stakingContract.harvest(0, wallet.address);
+    // await tx.wait();
+    // console.log(`harvest hash: ${tx.hash}`);
 }
 
 const Trans = async() => {
